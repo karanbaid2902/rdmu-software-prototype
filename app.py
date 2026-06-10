@@ -19,16 +19,6 @@ st.set_page_config(page_title="Smart City Command Center", layout="wide", initia
 # ==========================================
 st.markdown("""
 <style>
-    /* Dark Theme Backgrounds with Bright Text */
-    .stApp {
-        background-color: #0B0E14;
-        color: #FFFFFF !important;
-    }
-    
-    p, div, span, label {
-        color: #F8F9FA !important;
-    }
-    
     /* Glowing Title */
     .title-glow {
         font-family: 'Inter', sans-serif;
