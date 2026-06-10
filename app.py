@@ -29,8 +29,16 @@ st.markdown("""
         -webkit-text-fill-color: transparent;
         margin-bottom: 0px;
     }
-    /* Make standard markdown text bright */
-    .stMarkdown p, .stMarkdown h1, .stMarkdown h2, .stMarkdown h3, .stMarkdown h4, .stMarkdown h5, .stMarkdown h6 {
+    /* Bulletproof Bright Text Override */
+    p, span, label, h1, h2, h3, h4, h5, h6, div[data-baseweb="select"] div {
+        color: #F8F9FA !important;
+    }
+    
+    /* Ensure dropdown menus (selectboxes) have dark backgrounds to match the theme */
+    div[role="listbox"] {
+        background-color: #12161E !important;
+    }
+    div[role="listbox"] span {
         color: #F8F9FA !important;
     }
     .subtitle {
