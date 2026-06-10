@@ -277,7 +277,7 @@ if start_sim:
     rl_red = ((worst-sum(rl_emiss_h))/worst*100) if worst > 0 else 0
     cp_red = ((worst-sum(cp_emiss_h))/worst*100) if worst > 0 else 0
 
-    placeholder_metrics.success(f\"\"\"
+    placeholder_metrics.success(f"""
     ### ✅ Output 4: Performance Metrics
     | Metric | Deep RL | CP Baseline |
     |--------|:---:|:---:|
@@ -285,6 +285,6 @@ if start_sim:
     | **Renewable Util** | {rl_ren:.1f}% | {cp_ren:.1f}% |
     | **Emission Red.** | {rl_red:.1f}% | {cp_red:.1f}% |
     | **Cost (24h)** | ${sum(rl_cost_h):.0f} | ${sum(cp_cost_h):.0f} |
-    \"\"\")
+    """)
 else:
     placeholder_dispatch.info("👈 Set your parameters and click **Run Live Simulation**")
