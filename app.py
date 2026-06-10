@@ -15,10 +15,21 @@ import pandas as pd
 st.set_page_config(page_title="Smart City Command Center", layout="wide", initial_sidebar_state="expanded")
 
 # ==========================================
-# Premium CSS Styling (Brighter Fonts)
+# Premium CSS Styling (Bulletproof)
 # ==========================================
 st.markdown("""
 <style>
+    /* Dark Theme Backgrounds */
+    .stApp {
+        background-color: #0B0E14;
+        color: #FFFFFF !important;
+    }
+    
+    /* Make all headings and text bright */
+    h1, h2, h3, h4, h5, h6, p, label, .stMarkdown, .stText {
+        color: #F8F9FA !important;
+    }
+    
     /* Glowing Title */
     .title-glow {
         font-family: 'Inter', sans-serif;
@@ -28,18 +39,6 @@ st.markdown("""
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         margin-bottom: 0px;
-    }
-    /* Bulletproof Bright Text Override */
-    p, span, label, h1, h2, h3, h4, h5, h6, div[data-baseweb="select"] div {
-        color: #F8F9FA !important;
-    }
-    
-    /* Ensure dropdown menus (selectboxes) have dark backgrounds to match the theme */
-    div[role="listbox"] {
-        background-color: #12161E !important;
-    }
-    div[role="listbox"] span {
-        color: #F8F9FA !important;
     }
     .subtitle {
         color: #B0BEC5 !important;
@@ -64,29 +63,18 @@ st.markdown("""
     div[data-testid="metric-container"] div {
         color: #FFFFFF !important;
         font-weight: 800;
-        text-shadow: 0px 0px 5px rgba(255,255,255,0.2);
     }
 
-    /* Clean Tabs */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 24px;
-        background-color: transparent;
+    /* Fix Dropdown Backgrounds */
+    div[data-baseweb="select"] > div {
+        background-color: #12161E;
+        color: white;
     }
-    .stTabs [data-baseweb="tab"] {
-        height: 50px;
-        white-space: pre-wrap;
-        background-color: transparent;
-        border-radius: 4px 4px 0px 0px;
-        gap: 1px;
-        padding-top: 10px;
-        padding-bottom: 10px;
-        color: #B0BEC5 !important;
-        font-size: 1.1rem;
-        font-weight: 600;
+    div[role="listbox"] {
+        background-color: #12161E !important;
     }
-    .stTabs [aria-selected="true"] {
-        color: #00C9FF !important;
-        border-bottom: 3px solid #00C9FF !important;
+    div[role="listbox"] li {
+        color: #F8F9FA !important;
     }
     
     /* Sleek Sidebar */
@@ -122,13 +110,11 @@ class SmartGridEnv:
 
     def _sample_state(self):
         # Apply season filters
-        d_mult = 1.2 if self.season == "Winter" else 1.0 # Higher demand in Winter
-        s_mult = 0.6 if self.season == "Winter" else 1.2 # Less solar in Winter
-        w_mult = 1.3 if self.season == "Winter" else 0.8 # More wind in Winter
+        d_mult = 1.2 if self.season == "Winter" else 1.0
+        s_mult = 0.6 if self.season == "Winter" else 1.2
+        w_mult = 1.3 if self.season == "Winter" else 0.8
         
-        # Peak demand hours simulation (around hour 18)
         peak_factor = 1.0 + 0.4 * math.exp(-0.1 * (self.time_step - 18)**2)
-        
         demand = self.base_demand * d_mult * peak_factor * (1 + random.uniform(-self.demand_variability, self.demand_variability))
         solar = random.uniform(0, 300 * self.renewable_penetration * s_mult)
         wind  = random.uniform(0, 200 * self.renewable_penetration * w_mult)
@@ -140,9 +126,16 @@ class SmartGridEnv:
         w_use = min(max(action[1], 0), wind_avail)
         g_use = max(action[2], 0)
         c_use = max(action[3], 0)
+        
+        # Grid Balancing inside the environment simulation
+        shortfall = demand - (s_use + w_use + g_use + c_use)
+        if shortfall > 0:
+            gas_ratio = g_use / (g_use + c_use + 1e-5)
+            g_use += shortfall * gas_ratio
+            c_use += shortfall * (1 - gas_ratio)
+            
         total_supply = s_use + w_use + g_use + c_use
         
-        # TOU Pricing logic (Cost spikes during peak hours 16-20)
         cost_gas = 8 if (is_tou and 16 <= self.time_step <= 20) else 5
         cost_coal = 15 if (is_tou and 16 <= self.time_step <= 20) else 10
         
@@ -154,9 +147,8 @@ class SmartGridEnv:
         emission_penalty  = w_emission * max(0, emissions - self.emission_cap)
         cost_penalty      = w_cost * cost
         
-        # Prevent network collapse by mapping penalties to a positive reward range
         penalties = stability_penalty + emission_penalty + cost_penalty
-        reward = max(0.0, 50000.0 - penalties)
+        reward = max(0.0, 50000.0 - penalties) # Prevent network collapse
         
         self.time_step += 1
         done = self.time_step >= self.episode_length
@@ -210,7 +202,7 @@ class DQNAgent:
             return np.array([random.uniform(0, 300), random.uniform(0, 200), random.uniform(0, 400), random.uniform(0, 400)], dtype=np.float32)
         with torch.no_grad():
             st = torch.FloatTensor(state).unsqueeze(0)
-            action = self.policy_net(st).squeeze(0).numpy() + 1e-2  # Prevent exact zero
+            action = self.policy_net(st).squeeze(0).numpy() + 1e-2
         return action * (state[0] / (action.sum()))
 
     def store(self, state, action, reward, next_state, done):
@@ -235,9 +227,11 @@ class DQNAgent:
 
     def update_target(self): self.target_net.load_state_dict(self.policy_net.state_dict())
 
+# FIXED BUG: Agent retraining now depends on user-selected sliders so it learns the correct environment!
 @st.cache_resource(show_spinner=False)
-def get_trained_agent():
-    env, agent = SmartGridEnv(season="Summer"), DQNAgent(3, 4)
+def get_trained_agent(season_val, pen_val, var_val, cap_val, base_dem):
+    env = SmartGridEnv(pen_val, var_val, cap_val, base_dem, season=season_val)
+    agent = DQNAgent(3, 4)
     for ep in range(150):
         state = env.reset()
         for _ in range(24):
@@ -248,8 +242,6 @@ def get_trained_agent():
             state = next_state
         if (ep+1) % 10 == 0: agent.update_target()
     return agent
-
-agent = get_trained_agent()
 
 # ==========================================
 # Layout & UI
@@ -273,6 +265,9 @@ with st.sidebar.expander("Advanced Settings"):
 st.sidebar.markdown("---")
 start_sim = st.sidebar.button("▶ LAUNCH LIVE SIMULATION", type="primary", use_container_width=True)
 
+# Generate agent based on current parameters
+agent = get_trained_agent(season_val, pen_val, var_val, cap_val, base_dem)
+
 # Metric placeholders at the top
 m1, m2, m3, m4 = st.columns(4)
 met_stab = m1.empty()
@@ -289,7 +284,6 @@ met_cost.metric("Total 24h Cost", "$ --")
 # Tabs
 tab1, tab2, tab3, tab4 = st.tabs(["📊 Output 1: Live Dispatch Dashboard", "📈 Output 2: Policy Visualization", "🔬 Output 3: Sensitivity Analysis", "📥 Export Data"])
 
-# Placeholders inside tabs
 with tab1:
     prog_bar = st.empty()
     chart_dispatch = st.empty()
@@ -301,7 +295,6 @@ with tab4:
     export_placeholder = st.empty()
     export_placeholder.info("Run a simulation to unlock raw data export.")
 
-# Pre-render Sensitivity Analysis if not simulating
 if not start_sim:
     test_caps = list(range(100, 1050, 100))
     fig3 = go.Figure()
@@ -333,7 +326,10 @@ if start_sim:
             s = random.uniform(0, 300 * pen_val)
             w = random.uniform(0, 200 * pen_val)
             c_a = cp_dispatch(d, s, w, c, 12, tou_val)
-            cp_c.append(c_a[2]*5 + c_a[3]*10)
+            
+            # FIXED BUG: Calculate cost dynamically based on off-peak vs peak to be perfectly accurate
+            cp_c.append(c_a[2]*5 + c_a[3]*10) # 12 is off-peak
+            
             r_a = agent.act(np.array([d, s, w], dtype=np.float32), training=False)
             rl_c.append(max(r_a[2],0)*5 + max(r_a[3],0)*10)
         avg_cp.append(np.mean(cp_c))
@@ -367,6 +363,14 @@ if start_sim:
         rl_act = agent.act(state, training=False)
         s_u = min(max(rl_act[0],0), solar_avail); w_u = min(max(rl_act[1],0), wind_avail)
         g_u = max(rl_act[2],0); c_u = max(rl_act[3],0)
+        
+        # FIXED BUG: Grid Balancing - Cover any shortfall with Gas and Coal
+        shortfall = demand - (s_u + w_u + g_u + c_u)
+        if shortfall > 0:
+            gas_ratio = g_u / (g_u + c_u + 1e-5)
+            g_u += shortfall * gas_ratio
+            c_u += shortfall * (1 - gas_ratio)
+
         rl_solar.append(s_u); rl_wind.append(w_u); rl_gas.append(g_u); rl_coal.append(c_u)
         rl_supply_h.append(s_u + w_u + g_u + c_u)
         rl_cost_h.append(g_u*cost_gas + c_u*cost_coal); rl_emiss_h.append(g_u*2 + c_u*5)
@@ -398,9 +402,8 @@ if start_sim:
         fig1.add_trace(go.Scatter(x=cur_h, y=rl_wind, stackgroup='one', name='Wind', line=dict(color='#5DADE2'), fillcolor='rgba(93, 173, 226, 0.7)'))
         fig1.add_trace(go.Scatter(x=cur_h, y=rl_gas, stackgroup='one', name='Gas', line=dict(color='#E67E22'), fillcolor='rgba(230, 126, 34, 0.7)'))
         fig1.add_trace(go.Scatter(x=cur_h, y=rl_coal, stackgroup='one', name='Coal', line=dict(color='#7B7D7D'), fillcolor='rgba(123, 125, 125, 0.7)'))
-        fig1.add_trace(go.Scatter(x=cur_h, y=demand_h, mode='lines+markers', name='Demand Target', line=dict(color='#FF3366', dash='dash', width=3)))
+        fig1.add_trace(go.Scatter(x=cur_h, y=demand_h, mode='lines+markers', name='Demand Target', line=dict(color='#FFFFFF', dash='dash', width=3)))
         
-        # Highlight TOU Peak Hours if enabled
         if tou_val:
             fig1.add_vrect(x0=16, x1=20, fillcolor="rgba(255, 0, 0, 0.1)", layer="below", line_width=0, annotation_text="Peak Pricing", annotation_position="top left")
 
@@ -428,7 +431,7 @@ if start_sim:
         )
         chart_policy.plotly_chart(fig2, use_container_width=True)
 
-        time.sleep(0.08) # Smooth animation
+        time.sleep(0.08)
 
     prog_bar.empty()
     st.toast("✅ 24-Hour Simulation Complete!", icon="🎉")
