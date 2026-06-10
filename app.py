@@ -15,7 +15,7 @@ import pandas as pd
 st.set_page_config(page_title="Smart City Command Center", layout="wide", initial_sidebar_state="expanded")
 
 # ==========================================
-# Premium CSS Styling (Surgical & Bulletproof)
+# Premium CSS Styling (All White Fonts)
 # ==========================================
 st.markdown("""
 <style>
@@ -24,22 +24,12 @@ st.markdown("""
         background-color: #0B0E14;
     }
     
-    /* Make all headings bright */
-    h1, h2, h3, h4, h5, h6 {
-        color: #F8F9FA !important;
+    /* Force ALL text to be pure bright white */
+    * {
+        color: #FFFFFF !important;
     }
     
-    /* Standard Text & Labels */
-    .stMarkdown p, .stText {
-        color: #F8F9FA !important;
-    }
-    label {
-        color: #B0BEC5 !important;
-        font-weight: 600;
-        font-size: 1rem;
-    }
-    
-    /* Glowing Title */
+    /* Glowing Title Exception */
     .title-glow {
         font-family: 'Inter', sans-serif;
         font-weight: 800;
@@ -50,7 +40,6 @@ st.markdown("""
         margin-bottom: 0px;
     }
     .subtitle {
-        color: #B0BEC5 !important;
         font-size: 1.1rem;
         margin-bottom: 20px;
     }
@@ -65,23 +54,19 @@ st.markdown("""
         backdrop-filter: blur(10px);
     }
     div[data-testid="metric-container"] label {
-        color: #B0BEC5 !important;
+        font-weight: 600;
+        font-size: 1rem;
     }
     div[data-testid="metric-container"] div {
-        color: #FFFFFF !important;
         font-weight: 800;
     }
 
     /* Fix Dropdown Backgrounds */
     div[data-baseweb="select"] > div {
-        background-color: #12161E;
-        color: white;
+        background-color: #12161E !important;
     }
     div[role="listbox"] {
         background-color: #12161E !important;
-    }
-    div[role="listbox"] li {
-        color: #F8F9FA !important;
     }
     
     /* Tab Styling Fix */
@@ -90,24 +75,22 @@ st.markdown("""
         background-color: transparent;
     }
     .stTabs [data-baseweb="tab"] p {
-        color: #8B949E !important;
         font-size: 1.1rem;
         font-weight: 600;
     }
     .stTabs [aria-selected="true"] p {
-        color: #00C9FF !important;
+        border-bottom: 3px solid #00C9FF;
     }
     
     /* Alert Styling Fix */
     div[data-testid="stAlert"] {
         background-color: rgba(0, 201, 255, 0.1) !important;
         border: 1px solid #00C9FF;
-        color: #F8F9FA !important;
     }
     
     /* Sleek Sidebar */
     [data-testid="stSidebar"] {
-        background-color: #12161E;
+        background-color: #12161E !important;
         border-right: 1px solid #2D3748;
     }
 </style>
@@ -371,7 +354,7 @@ if start_sim:
         title=f'Emission Cap vs. Cost Efficiency ({season_val})',
         xaxis_title='Emission Cap Threshold', yaxis_title='Average Hourly Cost ($)',
         height=450, uirevision='constant', hovermode='x unified',
-        font=dict(color='#F8F9FA'), hoverlabel=dict(bgcolor='#12161E', font_color='#F8F9FA')
+        font=dict(color='#FFFFFF'), hoverlabel=dict(bgcolor='#12161E', font_color='#FFFFFF')
     )
     chart_sens.plotly_chart(fig3, use_container_width=True)
 
@@ -442,7 +425,7 @@ if start_sim:
             xaxis=dict(range=[0, 23], title='Hour of Day', gridcolor='rgba(255,255,255,0.1)'), 
             yaxis=dict(range=[0, 2000], title='Energy Supply (kW)', gridcolor='rgba(255,255,255,0.1)'),
             height=450, uirevision='constant', hovermode='x unified', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            font=dict(color='#F8F9FA'), hoverlabel=dict(bgcolor='#12161E', font_color='#F8F9FA')
+            font=dict(color='#FFFFFF'), hoverlabel=dict(bgcolor='#12161E', font_color='#FFFFFF')
         )
         chart_dispatch.plotly_chart(fig1, use_container_width=True)
 
@@ -460,7 +443,7 @@ if start_sim:
             yaxis=dict(title='Cost ($)', gridcolor='rgba(255,255,255,0.1)'), 
             yaxis2=dict(title='Emissions (units)'),
             height=450, uirevision='constant', hovermode='x unified', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            font=dict(color='#F8F9FA'), hoverlabel=dict(bgcolor='#12161E', font_color='#F8F9FA')
+            font=dict(color='#FFFFFF'), hoverlabel=dict(bgcolor='#12161E', font_color='#FFFFFF')
         )
         chart_policy.plotly_chart(fig2, use_container_width=True)
 
