@@ -20,12 +20,24 @@ st.set_page_config(page_title="Smart City Command Center", layout="wide", initia
 st.markdown("""
 <style>
     /* Dark Theme Backgrounds */
-    .stApp {
-        background-color: #0B0E14;
+    .stApp, .stApp > header {
+        background-color: #0B0E14 !important;
     }
     
-    /* Force ALL text to be pure bright white */
-    * {
+    /* Extreme specificity for pure bright white */
+    html, body, [class*="st-"], [class*="st-"] *, div, span, p, label, h1, h2, h3, h4, h5, h6, li {
+        color: #FFFFFF !important;
+    }
+    
+    div[data-testid="stMetricLabel"] *, div[data-testid="stMetricValue"] *, div[data-testid="stMetricDelta"] * {
+        color: #FFFFFF !important;
+    }
+    
+    button[data-baseweb="tab"] *, div[data-baseweb="tab-list"] * {
+        color: #FFFFFF !important;
+    }
+    
+    div[data-baseweb="select"] *, div[role="listbox"] * {
         color: #FFFFFF !important;
     }
     
@@ -39,33 +51,19 @@ st.markdown("""
         -webkit-text-fill-color: transparent;
         margin-bottom: 0px;
     }
-    .subtitle {
-        font-size: 1.1rem;
-        margin-bottom: 20px;
-    }
-
+    
     /* Glassmorphism Metric Cards */
     div[data-testid="metric-container"] {
-        background-color: rgba(255, 255, 255, 0.05);
-        border: 1px solid rgba(255, 255, 255, 0.15);
+        background-color: rgba(255, 255, 255, 0.05) !important;
+        border: 1px solid rgba(255, 255, 255, 0.3) !important;
         border-radius: 12px;
         padding: 15px 20px;
         box-shadow: 0 4px 15px rgba(0,0,0,0.4);
         backdrop-filter: blur(10px);
     }
-    div[data-testid="metric-container"] label {
-        font-weight: 600;
-        font-size: 1rem;
-    }
-    div[data-testid="metric-container"] div {
-        font-weight: 800;
-    }
 
     /* Fix Dropdown Backgrounds */
-    div[data-baseweb="select"] > div {
-        background-color: #12161E !important;
-    }
-    div[role="listbox"] {
+    div[data-baseweb="select"] > div, div[role="listbox"] {
         background-color: #12161E !important;
     }
     
@@ -74,24 +72,20 @@ st.markdown("""
         gap: 24px;
         background-color: transparent;
     }
-    .stTabs [data-baseweb="tab"] p {
-        font-size: 1.1rem;
-        font-weight: 600;
-    }
     .stTabs [aria-selected="true"] p {
-        border-bottom: 3px solid #00C9FF;
+        border-bottom: 3px solid #00C9FF !important;
     }
     
     /* Alert Styling Fix */
     div[data-testid="stAlert"] {
         background-color: rgba(0, 201, 255, 0.1) !important;
-        border: 1px solid #00C9FF;
+        border: 1px solid #00C9FF !important;
     }
     
     /* Sleek Sidebar */
     [data-testid="stSidebar"] {
         background-color: #12161E !important;
-        border-right: 1px solid #2D3748;
+        border-right: 1px solid #2D3748 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -351,10 +345,12 @@ if start_sim:
     fig3.add_trace(go.Scatter(x=test_caps, y=avg_rl, mode='lines+markers', name='Deep RL Agent', line=dict(color='#00C9FF', width=3)))
     fig3.update_layout(
         template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-        title=f'Emission Cap vs. Cost Efficiency ({season_val})',
-        xaxis_title='Emission Cap Threshold', yaxis_title='Average Hourly Cost ($)',
+        title=dict(text=f'Emission Cap vs. Cost Efficiency ({season_val})', font=dict(color='#FFFFFF', size=18)),
+        xaxis=dict(title=dict(text='Emission Cap Threshold', font=dict(color='#FFFFFF')), tickfont=dict(color='#FFFFFF'), gridcolor='rgba(255,255,255,0.1)'),
+        yaxis=dict(title=dict(text='Average Hourly Cost ($)', font=dict(color='#FFFFFF')), tickfont=dict(color='#FFFFFF'), gridcolor='rgba(255,255,255,0.1)'),
         height=450, uirevision='constant', hovermode='x unified',
-        font=dict(color='#FFFFFF'), hoverlabel=dict(bgcolor='#12161E', font_color='#FFFFFF')
+        font=dict(color='#FFFFFF'), hoverlabel=dict(bgcolor='#12161E', font_color='#FFFFFF'),
+        legend=dict(font=dict(color='#FFFFFF'))
     )
     chart_sens.plotly_chart(fig3, use_container_width=True)
 
@@ -421,10 +417,11 @@ if start_sim:
 
         fig1.update_layout(
             template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-            title=f'Live Energy Allocation vs Target Demand ({season_val})',
-            xaxis=dict(range=[0, 23], title='Hour of Day', gridcolor='rgba(255,255,255,0.1)'), 
-            yaxis=dict(range=[0, 2000], title='Energy Supply (kW)', gridcolor='rgba(255,255,255,0.1)'),
-            height=450, uirevision='constant', hovermode='x unified', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            title=dict(text=f'Live Energy Allocation vs Target Demand ({season_val})', font=dict(color='#FFFFFF', size=18)),
+            xaxis=dict(range=[0, 23], title=dict(text='Hour of Day', font=dict(color='#FFFFFF')), tickfont=dict(color='#FFFFFF'), gridcolor='rgba(255,255,255,0.1)'), 
+            yaxis=dict(range=[0, 2000], title=dict(text='Energy Supply (kW)', font=dict(color='#FFFFFF')), tickfont=dict(color='#FFFFFF'), gridcolor='rgba(255,255,255,0.1)'),
+            height=450, uirevision='constant', hovermode='x unified', 
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(color='#FFFFFF')),
             font=dict(color='#FFFFFF'), hoverlabel=dict(bgcolor='#12161E', font_color='#FFFFFF')
         )
         chart_dispatch.plotly_chart(fig1, use_container_width=True)
@@ -438,11 +435,12 @@ if start_sim:
         fig2.add_trace(go.Scatter(x=cur_h, y=[cap_val]*(h+1), name='Emission Cap', line=dict(color='#FFFFFF', dash='dash')), secondary_y=True)
         fig2.update_layout(
             template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-            title='Cost & Emissions: Deep RL vs Constraint Programming',
-            xaxis=dict(range=[0, 23], title='Hour of Day', gridcolor='rgba(255,255,255,0.1)'),
-            yaxis=dict(title='Cost ($)', gridcolor='rgba(255,255,255,0.1)'), 
-            yaxis2=dict(title='Emissions (units)'),
-            height=450, uirevision='constant', hovermode='x unified', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            title=dict(text='Cost & Emissions: Deep RL vs Constraint Programming', font=dict(color='#FFFFFF', size=18)),
+            xaxis=dict(range=[0, 23], title=dict(text='Hour of Day', font=dict(color='#FFFFFF')), tickfont=dict(color='#FFFFFF'), gridcolor='rgba(255,255,255,0.1)'),
+            yaxis=dict(title=dict(text='Cost ($)', font=dict(color='#FFFFFF')), tickfont=dict(color='#FFFFFF'), gridcolor='rgba(255,255,255,0.1)'), 
+            yaxis2=dict(title=dict(text='Emissions (units)', font=dict(color='#FFFFFF')), tickfont=dict(color='#FFFFFF')),
+            height=450, uirevision='constant', hovermode='x unified', 
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(color='#FFFFFF')),
             font=dict(color='#FFFFFF'), hoverlabel=dict(bgcolor='#12161E', font_color='#FFFFFF')
         )
         chart_policy.plotly_chart(fig2, use_container_width=True)
