@@ -28,7 +28,10 @@ st.markdown("""
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         margin-bottom: 0px;
-        padding-bottom: 0px;
+    }
+    /* Make standard markdown text bright */
+    .stMarkdown p, .stMarkdown h1, .stMarkdown h2, .stMarkdown h3, .stMarkdown h4, .stMarkdown h5, .stMarkdown h6 {
+        color: #F8F9FA !important;
     }
     .subtitle {
         color: #B0BEC5 !important;
@@ -142,7 +145,10 @@ class SmartGridEnv:
         stability_penalty = w_stability * abs(total_supply - demand)
         emission_penalty  = w_emission * max(0, emissions - self.emission_cap)
         cost_penalty      = w_cost * cost
-        reward = -(stability_penalty + emission_penalty + cost_penalty)
+        
+        # Prevent network collapse by mapping penalties to a positive reward range
+        penalties = stability_penalty + emission_penalty + cost_penalty
+        reward = max(0.0, 50000.0 - penalties)
         
         self.time_step += 1
         done = self.time_step >= self.episode_length
@@ -196,8 +202,8 @@ class DQNAgent:
             return np.array([random.uniform(0, 300), random.uniform(0, 200), random.uniform(0, 400), random.uniform(0, 400)], dtype=np.float32)
         with torch.no_grad():
             st = torch.FloatTensor(state).unsqueeze(0)
-            action = self.policy_net(st).squeeze(0).numpy()
-        return action * (state[0] / (action.sum() + 1e-8))
+            action = self.policy_net(st).squeeze(0).numpy() + 1e-2  # Prevent exact zero
+        return action * (state[0] / (action.sum()))
 
     def store(self, state, action, reward, next_state, done):
         self.replay_buffer.append((state, action, reward, next_state, done))
