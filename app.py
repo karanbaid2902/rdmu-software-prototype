@@ -1,463 +1,399 @@
-import streamlit as st
-import numpy as np
-import random
-import math
+"""
+Smart City Energy Grid Optimizer - Command Center Dashboard
+Deep Reinforcement Learning (DQN) + LP Constraint Optimisation
+
+This dashboard SERVES a pre-trained agent (train/serve split): it loads
+`dqn_grid_weights.pth` if present, otherwise trains once and caches the result.
+It never retrains on every slider change.
+"""
+import os, time, math, random
 from collections import deque
+
+import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from scipy.optimize import linprog
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import time
-import pandas as pd
+import streamlit as st
 
-st.set_page_config(page_title="Smart City Command Center", layout="wide", initial_sidebar_state="expanded")
+# ---------- Reproducibility ----------
+SEED = 42
+random.seed(SEED); np.random.seed(SEED); torch.manual_seed(SEED)
+
+st.set_page_config(page_title="Smart City Command Center", layout="wide",
+                   initial_sidebar_state="expanded")
 
 # ==========================================
-# Premium CSS Styling (All White Fonts)
+# Theme (dark glassmorphism)
 # ==========================================
 st.markdown("""
 <style>
-    /* Dark Theme Backgrounds */
-    .stApp, .stApp > header {
-        background-color: #0B0E14 !important;
-    }
-    
-    /* Extreme specificity for pure bright white */
-    html, body, [class*="st-"], [class*="st-"] *, div, span, p, label, h1, h2, h3, h4, h5, h6, li {
-        color: #FFFFFF !important;
-    }
-    
-    div[data-testid="stMetricLabel"] *, div[data-testid="stMetricValue"] *, div[data-testid="stMetricDelta"] * {
-        color: #FFFFFF !important;
-    }
-    
-    button[data-baseweb="tab"] *, div[data-baseweb="tab-list"] * {
-        color: #FFFFFF !important;
-    }
-    
-    div[data-baseweb="select"] *, div[role="listbox"] * {
-        color: #FFFFFF !important;
-    }
-    
-    /* Glowing Title Exception */
+    .stApp, .stApp > header { background-color: #0B0E14 !important; }
+    html, body, [class*="st-"], [class*="st-"] *, div, span, p, label,
+    h1, h2, h3, h4, h5, h6, li { color: #FFFFFF !important; }
+    div[data-testid="stMetricLabel"] *, div[data-testid="stMetricValue"] *,
+    div[data-testid="stMetricDelta"] * { color: #FFFFFF !important; }
+    button[data-baseweb="tab"] *, div[data-baseweb="tab-list"] * { color: #FFFFFF !important; }
+    div[data-baseweb="select"] *, div[role="listbox"] * { color: #FFFFFF !important; }
     .title-glow {
-        font-family: 'Inter', sans-serif;
-        font-weight: 800;
-        font-size: 2.5rem;
+        font-family: 'Inter', sans-serif; font-weight: 800; font-size: 2.5rem;
         background: linear-gradient(90deg, #00C9FF 0%, #92FE9D 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        margin-bottom: 0px;
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 0px;
     }
-    
-    /* Glassmorphism Metric Cards */
+    .subtitle { color: #8B95A5 !important; font-size: 1.0rem; margin-top: -6px; }
     div[data-testid="metric-container"] {
-        background-color: rgba(255, 255, 255, 0.05) !important;
-        border: 1px solid rgba(255, 255, 255, 0.3) !important;
-        border-radius: 12px;
-        padding: 15px 20px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.4);
-        backdrop-filter: blur(10px);
+        background-color: rgba(255,255,255,0.05) !important;
+        border: 1px solid rgba(255,255,255,0.30) !important; border-radius: 12px;
+        padding: 15px 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.4); backdrop-filter: blur(10px);
     }
-
-    /* Fix Dropdown Backgrounds */
-    div[data-baseweb="select"] > div, div[role="listbox"] {
-        background-color: #12161E !important;
-    }
-    
-    /* Tab Styling Fix */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 24px;
-        background-color: transparent;
-    }
-    .stTabs [aria-selected="true"] p {
-        border-bottom: 3px solid #00C9FF !important;
-    }
-    
-    /* Alert Styling Fix */
+    div[data-baseweb="select"] > div, div[role="listbox"] { background-color: #12161E !important; }
+    .stTabs [data-baseweb="tab-list"] { gap: 24px; background-color: transparent; }
+    .stTabs [aria-selected="true"] p { border-bottom: 3px solid #00C9FF !important; }
     div[data-testid="stAlert"] {
-        background-color: rgba(0, 201, 255, 0.1) !important;
-        border: 1px solid #00C9FF !important;
-    }
-    
-    /* Sleek Sidebar */
-    [data-testid="stSidebar"] {
-        background-color: #12161E !important;
-        border-right: 1px solid #2D3748 !important;
-    }
+        background-color: rgba(0,201,255,0.1) !important; border: 1px solid #00C9FF !important; }
+    [data-testid="stSidebar"] { background-color: #12161E !important; border-right: 1px solid #2D3748 !important; }
 </style>
 """, unsafe_allow_html=True)
 
+# ==========================================
+# Core: Environment, LP baseline, DQN  (identical to the corrected notebook)
+# ==========================================
+GAS_FRACTIONS = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+N_ACTIONS = len(GAS_FRACTIONS)
 
-# ==========================================
-# Core Classes (Env, CP, DQN)
-# ==========================================
 class SmartGridEnv:
-    COST_SOLAR, COST_WIND = 0, 0
-    EMIS_SOLAR, EMIS_WIND, EMIS_GAS, EMIS_COAL = 0, 0, 2, 5
+    COST_GAS, COST_COAL = 6.0, 3.0
+    EMIS_GAS, EMIS_COAL = 2.0, 5.0
+    GAS_CAP,  COAL_CAP  = 500.0, 700.0
+    W_EMISSION, W_UNMET = 4.0, 20.0
+    REWARD_SCALE        = 1000.0
 
-    def __init__(self, renewable_penetration=1.0, demand_variability=0.2, emission_cap=500, base_demand=700, episode_length=24, season="Summer"):
-        self.state_dim = 3
-        self.action_dim = 4
+    def __init__(self, renewable_penetration=1.0, demand_variability=0.2, emission_cap=1500,
+                 base_demand=700, episode_length=24, season="Summer", is_tou=False):
+        self.state_dim, self.action_dim = 5, N_ACTIONS
         self.renewable_penetration = renewable_penetration
         self.demand_variability = demand_variability
         self.emission_cap = emission_cap
         self.base_demand = base_demand
         self.episode_length = episode_length
         self.season = season
+        self.is_tou = is_tou
 
     def reset(self):
         self.time_step = 0
-        self.state = self._sample_state()
-        return self.state.copy()
+        self.raw = self._sample()
+        return self._norm(self.raw)
 
-    def _sample_state(self):
-        # Apply season filters
+    def _sample(self):
         d_mult = 1.2 if self.season == "Winter" else 1.0
         s_mult = 0.6 if self.season == "Winter" else 1.2
         w_mult = 1.3 if self.season == "Winter" else 0.8
-        
-        peak_factor = 1.0 + 0.4 * math.exp(-0.1 * (self.time_step - 18)**2)
-        demand = self.base_demand * d_mult * peak_factor * (1 + random.uniform(-self.demand_variability, self.demand_variability))
+        peak = 1.0 + 0.4 * math.exp(-0.1 * (self.time_step - 18) ** 2)
+        demand = self.base_demand * d_mult * peak * (1 + random.uniform(-self.demand_variability, self.demand_variability))
         solar = random.uniform(0, 300 * self.renewable_penetration * s_mult)
         wind  = random.uniform(0, 200 * self.renewable_penetration * w_mult)
-        return np.array([demand, solar, wind], dtype=np.float32)
+        return np.array([demand, solar, wind, self.time_step, self.emission_cap], dtype=np.float32)
 
-    def step(self, action, is_tou=False):
-        demand, solar_avail, wind_avail = self.state
-        s_use = min(max(action[0], 0), solar_avail)
-        w_use = min(max(action[1], 0), wind_avail)
-        g_use = max(action[2], 0)
-        c_use = max(action[3], 0)
-        
-        # Grid Balancing inside the environment simulation
-        shortfall = demand - (s_use + w_use + g_use + c_use)
-        if shortfall > 0:
-            gas_ratio = g_use / (g_use + c_use + 1e-5)
-            g_use += shortfall * gas_ratio
-            c_use += shortfall * (1 - gas_ratio)
-            
-        total_supply = s_use + w_use + g_use + c_use
-        
-        cost_gas = 8 if (is_tou and 16 <= self.time_step <= 20) else 5
-        cost_coal = 15 if (is_tou and 16 <= self.time_step <= 20) else 10
-        
-        cost = g_use * cost_gas + c_use * cost_coal
-        emissions = g_use * self.EMIS_GAS + c_use * self.EMIS_COAL
-        
-        w_cost, w_emission, w_stability = 1.0, 5.0, 10.0
-        stability_penalty = w_stability * abs(total_supply - demand)
-        emission_penalty  = w_emission * max(0, emissions - self.emission_cap)
-        cost_penalty      = w_cost * cost
-        
-        penalties = stability_penalty + emission_penalty + cost_penalty
-        reward = max(0.0, 50000.0 - penalties) # Prevent network collapse
-        
+    def _norm(self, raw):
+        d, s, w, t, cap = raw
+        return np.array([d/1000.0, s/300.0, w/200.0, t/24.0, cap/1500.0], dtype=np.float32)
+
+    def _prices(self):
+        peak = self.is_tou and 16 <= self.time_step <= 20
+        return (self.COST_GAS * (1.6 if peak else 1.0), self.COST_COAL * (1.6 if peak else 1.0))
+
+    def dispatch(self, raw, action_idx):
+        demand, solar_av, wind_av, _, cap = raw
+        cost_gas, cost_coal = self._prices()
+        gas_frac = GAS_FRACTIONS[action_idx]
+        solar_u, wind_u = solar_av, wind_av
+        residual = max(0.0, demand - solar_u - wind_u)
+        gas_u  = min(gas_frac * residual,       self.GAS_CAP)
+        coal_u = min((1 - gas_frac) * residual, self.COAL_CAP)
+        unmet = max(0.0, demand - (solar_u + wind_u + gas_u + coal_u))
+        add = min(unmet, self.GAS_CAP  - gas_u);  gas_u  += add; unmet -= add
+        add = min(unmet, self.COAL_CAP - coal_u); coal_u += add; unmet -= add
+        cost = gas_u * cost_gas + coal_u * cost_coal
+        emissions = gas_u * self.EMIS_GAS + coal_u * self.EMIS_COAL
+        return dict(solar=solar_u, wind=wind_u, gas=gas_u, coal=coal_u, cost=cost,
+                    emissions=emissions, unmet=unmet, supply=solar_u + wind_u + gas_u + coal_u, demand=demand)
+
+    def step(self, action_idx):
+        d = self.dispatch(self.raw, action_idx)
+        over = max(0.0, d["emissions"] - self.emission_cap)
+        reward = -(d["cost"] + self.W_EMISSION * over + self.W_UNMET * d["unmet"]) / self.REWARD_SCALE
         self.time_step += 1
         done = self.time_step >= self.episode_length
-        self.state = self._sample_state()
-        return self.state.copy(), reward, done, {}
+        self.raw = self._sample()
+        return self._norm(self.raw), reward, done, d
 
-def cp_dispatch(demand, solar_avail, wind_avail, emission_cap, time_step, is_tou):
-    cost_gas = 8 if (is_tou and 16 <= time_step <= 20) else 5
-    cost_coal = 15 if (is_tou and 16 <= time_step <= 20) else 10
-    
+
+def lp_dispatch(raw, env):
+    demand, solar_av, wind_av, _, cap = raw
+    cost_gas, cost_coal = env._prices()
     c = [0, 0, cost_gas, cost_coal]
-    A_eq = [[1, 1, 1, 1]]
-    b_eq = [demand]
-    A_ub = [[0, 0, 2, 5]]
-    b_ub = [emission_cap]
-    bounds = [(0, solar_avail), (0, wind_avail), (0, None), (0, None)]
-    result = linprog(c, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq, bounds=bounds, method='highs')
-    if result.success: return list(result.x)
-    remaining = max(0, demand - solar_avail - wind_avail)
-    return [solar_avail, wind_avail, remaining * 0.7, remaining * 0.3]
+    A_eq = [[1, 1, 1, 1]]; b_eq = [demand]
+    A_ub = [[0, 0, env.EMIS_GAS, env.EMIS_COAL]]; b_ub = [cap]
+    bounds = [(0, solar_av), (0, wind_av), (0, env.GAS_CAP), (0, env.COAL_CAP)]
+    res = linprog(c, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq, bounds=bounds, method="highs")
+    if res.success:
+        s, w, g, co = res.x; feasible = True
+    else:
+        s, w = solar_av, wind_av
+        residual = max(0.0, demand - s - w)
+        g = min(residual, env.GAS_CAP); co = min(residual - g, env.COAL_CAP); feasible = False
+    return dict(solar=s, wind=w, gas=g, coal=co, cost=g*cost_gas + co*cost_coal,
+                emissions=g*env.EMIS_GAS + co*env.EMIS_COAL, supply=s + w + g + co,
+                demand=demand, feasible=feasible)
+
 
 class DQN(nn.Module):
-    def __init__(self, state_dim, action_dim):
-        super(DQN, self).__init__()
-        self.net = nn.Sequential(
-            nn.Linear(state_dim, 128), nn.ReLU(),
-            nn.Linear(128, 128), nn.ReLU(),
-            nn.Linear(128, action_dim), nn.Softplus()
-        )
+    def __init__(self, state_dim, n_actions):
+        super().__init__()
+        self.net = nn.Sequential(nn.Linear(state_dim, 128), nn.ReLU(),
+                                 nn.Linear(128, 128), nn.ReLU(), nn.Linear(128, n_actions))
     def forward(self, x): return self.net(x)
 
-class DQNAgent:
-    def __init__(self, state_dim, action_dim):
-        self.state_dim, self.action_dim = state_dim, action_dim
-        self.gamma, self.batch_size = 0.99, 64
-        self.eps_start, self.eps_end, self.eps_decay = 1.0, 0.01, 100
-        self.steps_done = 0
-        self.policy_net, self.target_net = DQN(state_dim, action_dim), DQN(state_dim, action_dim)
-        self.target_net.load_state_dict(self.policy_net.state_dict())
-        self.target_net.eval()
-        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=1e-3)
-        self.criterion = nn.SmoothL1Loss()
-        self.replay_buffer = deque(maxlen=5000)
 
-    def get_epsilon(self):
+class DQNAgent:
+    def __init__(self, state_dim, n_actions):
+        self.n_actions = n_actions
+        self.gamma, self.batch_size = 0.95, 64
+        self.eps_start, self.eps_end, self.eps_decay = 1.0, 0.02, 2000
+        self.steps_done = 0
+        self.policy_net = DQN(state_dim, n_actions)
+        self.target_net = DQN(state_dim, n_actions)
+        self.target_net.load_state_dict(self.policy_net.state_dict()); self.target_net.eval()
+        self.opt = optim.Adam(self.policy_net.parameters(), lr=1e-3)
+        self.loss_fn = nn.SmoothL1Loss()
+        self.buffer = deque(maxlen=10000)
+
+    def epsilon(self):
         return self.eps_end + (self.eps_start - self.eps_end) * math.exp(-self.steps_done / self.eps_decay)
 
     def act(self, state, training=True):
-        self.steps_done += 1
-        if training and random.random() < self.get_epsilon():
-            return np.array([random.uniform(0, 300), random.uniform(0, 200), random.uniform(0, 400), random.uniform(0, 400)], dtype=np.float32)
+        if training:
+            self.steps_done += 1
+            if random.random() < self.epsilon(): return random.randrange(self.n_actions)
         with torch.no_grad():
-            st = torch.FloatTensor(state).unsqueeze(0)
-            action = self.policy_net(st).squeeze(0).numpy() + 1e-2
-        return action * (state[0] / (action.sum()))
+            q = self.policy_net(torch.FloatTensor(state).unsqueeze(0))
+            return int(q.argmax(dim=1).item())
 
-    def store(self, state, action, reward, next_state, done):
-        self.replay_buffer.append((state, action, reward, next_state, done))
+    def store(self, *t): self.buffer.append(t)
 
     def train_step(self):
-        if len(self.replay_buffer) < self.batch_size: return
-        batch = random.sample(list(self.replay_buffer), self.batch_size)
-        states, actions, rewards, next_states, dones = zip(*batch)
-        states_t, rewards_t = torch.FloatTensor(np.array(states)), torch.FloatTensor(rewards)
-        next_t, dones_t = torch.FloatTensor(np.array(next_states)), torch.FloatTensor(dones)
-        
-        current_q = self.policy_net(states_t)
+        if len(self.buffer) < self.batch_size: return None
+        s, a, r, ns, d = zip(*random.sample(self.buffer, self.batch_size))
+        s = torch.FloatTensor(np.array(s)); ns = torch.FloatTensor(np.array(ns))
+        a = torch.LongTensor(a).unsqueeze(1); r = torch.FloatTensor(r); d = torch.FloatTensor(d)
+        q_sa = self.policy_net(s).gather(1, a).squeeze(1)
         with torch.no_grad():
-            next_q = self.target_net(next_t)
-            target_vals = rewards_t + (1 - dones_t) * self.gamma * next_q.mean(dim=1)
-        
-        loss = self.criterion(current_q.mean(dim=1), target_vals)
-        self.optimizer.zero_grad(); loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), 1.0)
-        self.optimizer.step()
+            q_next = self.target_net(ns).max(dim=1)[0]
+            target = r + (1 - d) * self.gamma * q_next
+        loss = self.loss_fn(q_sa, target)
+        self.opt.zero_grad(); loss.backward()
+        nn.utils.clip_grad_norm_(self.policy_net.parameters(), 1.0); self.opt.step()
+        return loss.item()
 
     def update_target(self): self.target_net.load_state_dict(self.policy_net.state_dict())
 
-# FIXED BUG: Agent retraining now depends on user-selected sliders so it learns the correct environment!
+
+# ==========================================
+# Train/serve split: load weights, else train ONCE and cache
+# ==========================================
+WEIGHTS_PATH = "dqn_grid_weights.pth"
+
+def _random_config_env():
+    return SmartGridEnv(renewable_penetration=random.uniform(0.5, 2.0),
+                        demand_variability=random.uniform(0.0, 0.5),
+                        emission_cap=random.choice([400, 800, 1200, 1600, 2000, 2600, 3200]),
+                        base_demand=random.randint(500, 1500),
+                        season=random.choice(["Summer", "Winter"]),
+                        is_tou=random.choice([True, False]))
+
 @st.cache_resource(show_spinner=False)
-def get_trained_agent(season_val, pen_val, var_val, cap_val, base_dem):
-    env = SmartGridEnv(pen_val, var_val, cap_val, base_dem, season=season_val)
-    agent = DQNAgent(3, 4)
-    for ep in range(150):
-        state = env.reset()
+def get_agent():
+    agent = DQNAgent(5, N_ACTIONS)
+    if os.path.exists(WEIGHTS_PATH):
+        agent.policy_net.load_state_dict(torch.load(WEIGHTS_PATH, map_location="cpu"))
+        agent.policy_net.eval()
+        return agent, "loaded"
+    # Domain-randomised training so ONE agent serves every slider setting
+    for ep in range(500):
+        env = _random_config_env(); s = env.reset()
         for _ in range(24):
-            action = agent.act(state, training=True)
-            next_state, reward, done, _ = env.step(action)
-            agent.store(state, action, reward, next_state, float(done))
-            agent.train_step()
-            state = next_state
-        if (ep+1) % 10 == 0: agent.update_target()
-    return agent
+            a = agent.act(s, training=True)
+            ns, r, done, _ = env.step(a)
+            agent.store(s, a, r, ns, float(done)); agent.train_step(); s = ns
+        if (ep + 1) % 10 == 0: agent.update_target()
+    try: torch.save(agent.policy_net.state_dict(), WEIGHTS_PATH)
+    except Exception: pass
+    return agent, "trained"
+
 
 # ==========================================
-# Layout & UI
+# UI
 # ==========================================
-st.markdown('<p class="title-glow">⚡ Smart City Energy Command Center</p>', unsafe_allow_html=True)
-st.markdown('<p class="subtitle">Advanced Deep RL & Constraint Programming Optimizer Simulator</p>', unsafe_allow_html=True)
+st.markdown('<p class="title-glow">&#9889; Smart City Energy Command Center</p>', unsafe_allow_html=True)
+st.markdown('<p class="subtitle">Deep Reinforcement Learning (DQN) vs LP Constraint Optimisation &mdash; live dispatch simulator</p>', unsafe_allow_html=True)
 
-# Sidebar
-st.sidebar.markdown("### 🎛️ Primary Controls")
+st.sidebar.markdown("### Primary Controls")
 pen_val = st.sidebar.slider("Renewable Penetration", 0.5, 2.0, 1.0, 0.1, help="Scales available solar & wind power.")
-cap_val = st.sidebar.slider("Emission Cap (units)", 100, 1000, 500, 50, help="Hard limit for constraint solver.")
+cap_val = st.sidebar.slider("Emission Cap (units)", 400, 3200, 1500, 100, help="Emission ceiling; part of the agent's state.")
 
-st.sidebar.markdown("### 🌡️ Environment Filters")
-season_val = st.sidebar.selectbox("Season", ["Summer", "Winter"], help="Winter features higher demand and more wind, Summer features high solar.")
-var_val = st.sidebar.slider("Demand Variability", 0.0, 0.5, 0.2, 0.05, help="Random fluctuation in hourly demand.")
+st.sidebar.markdown("### Environment")
+season_val = st.sidebar.selectbox("Season", ["Summer", "Winter"], help="Winter: higher demand & wind. Summer: high solar.")
+var_val = st.sidebar.slider("Demand Variability", 0.0, 0.5, 0.2, 0.05, help="Random hourly demand fluctuation.")
 
 with st.sidebar.expander("Advanced Settings"):
     base_dem = st.slider("Base Demand (kW)", 500, 1500, 700, 50)
-    tou_val = st.checkbox("Enable Time-Of-Use Pricing", value=False, help="Spikes cost of traditional fuels during peak hours (16:00-20:00). Tests agent adaptability.")
+    tou_val = st.checkbox("Enable Time-Of-Use Pricing", value=False,
+                          help="Raises fossil-fuel cost during peak hours (16:00-20:00).")
 
 st.sidebar.markdown("---")
-start_sim = st.sidebar.button("▶ LAUNCH LIVE SIMULATION", type="primary", use_container_width=True)
+start_sim = st.sidebar.button("LAUNCH LIVE SIMULATION", type="primary", use_container_width=True)
 
-# Generate agent based on current parameters
-agent = get_trained_agent(season_val, pen_val, var_val, cap_val, base_dem)
+# Load the pre-trained agent (one-time)
+with st.spinner("Preparing Deep RL agent..."):
+    agent, source = get_agent()
+st.sidebar.caption(f"DQN agent: {'pre-trained weights loaded' if source=='loaded' else 'trained & cached'} \u2705")
 
-# Metric placeholders at the top
+# Top metrics
 m1, m2, m3, m4 = st.columns(4)
-met_stab = m1.empty()
-met_ren  = m2.empty()
-met_red  = m3.empty()
-met_cost = m4.empty()
-
-# Initialize empty metrics
+met_stab, met_ren, met_red, met_cost = m1.empty(), m2.empty(), m3.empty(), m4.empty()
 met_stab.metric("Grid Stability Index", "-- %")
 met_ren.metric("Renewable Util. Rate", "-- %")
 met_red.metric("Emission Reduction", "-- %")
-met_cost.metric("Total 24h Cost", "$ --")
+met_cost.metric("Total 24h Cost (RL)", "$ --")
 
-# Tabs
-tab1, tab2, tab3, tab4 = st.tabs(["📊 Output 1: Live Dispatch Dashboard", "📈 Output 2: Policy Visualization", "🔬 Output 3: Sensitivity Analysis", "📥 Export Data"])
-
+tab1, tab2, tab3, tab4 = st.tabs(["Output 1: Live Dispatch", "Output 2: Policy Comparison",
+                                  "Output 3: Sensitivity Analysis", "Output 4: Export"])
 with tab1:
-    prog_bar = st.empty()
-    chart_dispatch = st.empty()
+    prog_bar = st.empty(); chart_dispatch = st.empty()
 with tab2:
     chart_policy = st.empty()
 with tab3:
     chart_sens = st.empty()
 with tab4:
     export_placeholder = st.empty()
-    export_placeholder.info("Run a simulation to unlock raw data export.")
 
+DARK = dict(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="#FFFFFF"), height=460, hovermode="x unified",
+            hoverlabel=dict(bgcolor="#12161E", font_color="#FFFFFF"))
+
+# Idle placeholders
 if not start_sim:
-    test_caps = list(range(100, 1050, 100))
-    fig3 = go.Figure()
-    fig3.add_trace(go.Scatter(x=test_caps, y=[c*0.8 for c in test_caps], mode='lines', name='Waiting for run...', line=dict(color='#30363D', dash='dash')))
-    fig3.update_layout(template="plotly_dark", title='Output 3: Sensitivity Analysis (Awaiting Run)', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=400)
-    chart_sens.plotly_chart(fig3, use_container_width=True)
+    chart_dispatch.info("Adjust the controls and press **LAUNCH LIVE SIMULATION**.")
+    f = go.Figure(); f.update_layout(title="Output 3: Sensitivity (awaiting run)", **DARK)
+    chart_sens.plotly_chart(f, use_container_width=True)
+    export_placeholder.info("Run a simulation to unlock raw-data export.")
 
 # ==========================================
-# Simulation Execution
+# Simulation
 # ==========================================
 if start_sim:
-    env = SmartGridEnv(pen_val, var_val, cap_val, base_dem, season=season_val)
-    state = env.reset()
+    sim = SmartGridEnv(pen_val, var_val, cap_val, base_dem, season=season_val, is_tou=tou_val)
+    state = sim.reset()
     hours = list(range(24))
-    demand_h, rl_solar, rl_wind, rl_gas, rl_coal = [], [], [], [], []
-    rl_cost_h, rl_emiss_h, rl_supply_h = [], [], []
-    cp_solar, cp_wind, cp_gas, cp_coal = [], [], [], []
-    cp_cost_h, cp_emiss_h, cp_supply_h = [], [], []
+    demand_h = []
+    rl = {k: [] for k in ["solar", "wind", "gas", "coal", "cost", "emis", "supply", "unmet"]}
+    cp = {k: [] for k in ["cost", "emis", "supply"]}
 
-    # ----------------------------------------
-    # Compute Sensitivity Analysis (Output 3)
-    # ----------------------------------------
-    test_caps = list(range(100, 1050, 100))
-    avg_cp, avg_rl = [], []
-    for c in test_caps:
-        cp_c, rl_c = [], []
-        for _ in range(3):
-            d = base_dem * (1 + random.uniform(-var_val, var_val))
-            s = random.uniform(0, 300 * pen_val)
-            w = random.uniform(0, 200 * pen_val)
-            c_a = cp_dispatch(d, s, w, c, 12, tou_val)
-            
-            # FIXED BUG: Calculate cost dynamically based on off-peak vs peak to be perfectly accurate
-            cp_c.append(c_a[2]*5 + c_a[3]*10) # 12 is off-peak
-            
-            r_a = agent.act(np.array([d, s, w], dtype=np.float32), training=False)
-            rl_c.append(max(r_a[2],0)*5 + max(r_a[3],0)*10)
-        avg_cp.append(np.mean(cp_c))
-        avg_rl.append(np.mean(rl_c))
-    
-    fig3 = go.Figure()
-    fig3.add_trace(go.Scatter(x=test_caps, y=avg_cp, mode='lines+markers', name='CP Baseline', line=dict(color='#00FF00', width=3)))
-    fig3.add_trace(go.Scatter(x=test_caps, y=avg_rl, mode='lines+markers', name='Deep RL Agent', line=dict(color='#00C9FF', width=3)))
-    fig3.update_layout(
-        template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-        title=dict(text=f'Emission Cap vs. Cost Efficiency ({season_val})', font=dict(color='#FFFFFF', size=18)),
-        xaxis=dict(title=dict(text='Emission Cap Threshold', font=dict(color='#FFFFFF')), tickfont=dict(color='#FFFFFF'), gridcolor='rgba(255,255,255,0.1)'),
-        yaxis=dict(title=dict(text='Average Hourly Cost ($)', font=dict(color='#FFFFFF')), tickfont=dict(color='#FFFFFF'), gridcolor='rgba(255,255,255,0.1)'),
-        height=450, uirevision='constant', hovermode='x unified',
-        font=dict(color='#FFFFFF'), hoverlabel=dict(bgcolor='#12161E', font_color='#FFFFFF'),
-        legend=dict(font=dict(color='#FFFFFF'))
-    )
-    chart_sens.plotly_chart(fig3, use_container_width=True)
+    # ---- Output 3: Monte-Carlo sensitivity (compute up front) ----
+    caps = list(range(600, 3001, 300)); N_MC = 40
+    rl_m, rl_s, lp_m, lp_s = [], [], [], []
+    for cap in caps:
+        e = SmartGridEnv(pen_val, var_val, cap, base_dem, season=season_val, is_tou=tou_val)
+        a_rl, a_lp = [], []
+        for _ in range(N_MC):
+            e.time_step = random.randint(0, 23); raw = e._sample()
+            a_rl.append(e.dispatch(raw, agent.act(e._norm(raw), training=False))["cost"])
+            a_lp.append(lp_dispatch(raw, e)["cost"])
+        rl_m.append(np.mean(a_rl)); rl_s.append(np.std(a_rl))
+        lp_m.append(np.mean(a_lp)); lp_s.append(np.std(a_lp))
+    rl_m, rl_s, lp_m, lp_s = map(np.array, (rl_m, rl_s, lp_m, lp_s))
+    f3 = go.Figure()
+    f3.add_trace(go.Scatter(x=caps+caps[::-1], y=list(rl_m+rl_s)+list((rl_m-rl_s)[::-1]),
+                            fill="toself", fillcolor="rgba(0,201,255,0.15)", line=dict(width=0),
+                            showlegend=False, hoverinfo="skip"))
+    f3.add_trace(go.Scatter(x=caps, y=rl_m, mode="lines+markers", name="Deep RL Agent", line=dict(color="#00C9FF", width=3)))
+    f3.add_trace(go.Scatter(x=caps+caps[::-1], y=list(lp_m+lp_s)+list((lp_m-lp_s)[::-1]),
+                            fill="toself", fillcolor="rgba(0,255,0,0.12)", line=dict(width=0),
+                            showlegend=False, hoverinfo="skip"))
+    f3.add_trace(go.Scatter(x=caps, y=lp_m, mode="lines+markers", name="LP Optimum", line=dict(color="#00FF00", width=3)))
+    f3.update_layout(title=f"Emission Cap vs Cost (mean &plusmn; 1 std, {season_val})",
+                     xaxis_title="Emission Cap Threshold", yaxis_title="Average Hourly Cost ($)", **DARK)
+    chart_sens.plotly_chart(f3, use_container_width=True)
 
-    # ----------------------------------------
-    # Live Animation Loop
-    # ----------------------------------------
+    # ---- 24h rollout with animated Output 1 ----
     for h in hours:
-        prog_bar.progress((h + 1) / 24, text=f"⏳ Simulating Hour {h+1} / 24...")
-        
-        demand, solar_avail, wind_avail = state
-        demand_h.append(demand)
+        prog_bar.progress((h + 1) / 24, text=f"Simulating Hour {h + 1} / 24...")
+        raw = sim.raw.copy()
+        a = agent.act(state, training=False)
+        d = sim.dispatch(raw, a); lp = lp_dispatch(raw, sim)
+        demand_h.append(d["demand"])
+        for k in ["solar", "wind", "gas", "coal", "cost", "supply", "unmet"]: rl[k].append(d[k])
+        rl["emis"].append(d["emissions"])
+        cp["cost"].append(lp["cost"]); cp["emis"].append(lp["emissions"]); cp["supply"].append(lp["supply"])
+        state, _, _, _ = sim.step(a)
 
-        # TOU Costing
-        cost_gas = 8 if (tou_val and 16 <= h <= 20) else 5
-        cost_coal = 15 if (tou_val and 16 <= h <= 20) else 10
+        # live metrics (REAL values; cost delta vs LP optimum)
+        dem = np.array(demand_h)
+        stab = 100 * (1 - sum(rl["unmet"]) / sum(demand_h))
+        ren = 100 * (sum(rl["solar"]) + sum(rl["wind"])) / max(sum(rl["supply"]), 1e-9)
+        residual_coal = sum(max(0, demand_h[i] - rl["solar"][i] - rl["wind"][i]) for i in range(len(demand_h))) * 5
+        red = 100 * (1 - sum(rl["emis"]) / residual_coal) if residual_coal > 0 else 0
+        gap = (sum(rl["cost"]) / sum(cp["cost"]) - 1) * 100 if sum(cp["cost"]) > 0 else 0
+        met_stab.metric("Grid Stability Index", f"{stab:.1f}%")
+        met_ren.metric("Renewable Util. Rate", f"{ren:.1f}%")
+        met_red.metric("Emission Reduction", f"{red:.1f}%")
+        met_cost.metric("Total 24h Cost (RL)", f"${sum(rl['cost']):,.0f}", f"{gap:+.1f}% vs LP optimum",
+                        delta_color="inverse")
 
-        # RL Agent Action
-        rl_act = agent.act(state, training=False)
-        s_u = min(max(rl_act[0],0), solar_avail); w_u = min(max(rl_act[1],0), wind_avail)
-        g_u = max(rl_act[2],0); c_u = max(rl_act[3],0)
-        
-        # FIXED BUG: Grid Balancing - Cover any shortfall with Gas and Coal
-        shortfall = demand - (s_u + w_u + g_u + c_u)
-        if shortfall > 0:
-            gas_ratio = g_u / (g_u + c_u + 1e-5)
-            g_u += shortfall * gas_ratio
-            c_u += shortfall * (1 - gas_ratio)
-
-        rl_solar.append(s_u); rl_wind.append(w_u); rl_gas.append(g_u); rl_coal.append(c_u)
-        rl_supply_h.append(s_u + w_u + g_u + c_u)
-        rl_cost_h.append(g_u*cost_gas + c_u*cost_coal); rl_emiss_h.append(g_u*2 + c_u*5)
-
-        # CP Baseline Action
-        cp_act = cp_dispatch(demand, solar_avail, wind_avail, cap_val, h, tou_val)
-        cp_solar.append(cp_act[0]); cp_wind.append(cp_act[1]); cp_gas.append(cp_act[2]); cp_coal.append(cp_act[3])
-        cp_supply_h.append(sum(cp_act))
-        cp_cost_h.append(cp_act[2]*cost_gas + cp_act[3]*cost_coal); cp_emiss_h.append(cp_act[2]*2 + cp_act[3]*5)
-
-        state, _, _, _ = env.step(list(rl_act), is_tou=tou_val)
-
-        # --- Update Top Metrics Live ---
-        dem_arr = np.array(demand_h)
-        rl_stab = max(0, 100 - np.mean(np.abs(np.array(rl_supply_h) - dem_arr)) / np.mean(dem_arr) * 100)
-        rl_ren = ((sum(rl_solar)+sum(rl_wind))/sum(rl_supply_h)*100) if sum(rl_supply_h) > 0 else 0
-        worst = sum(demand_h)*5
-        rl_red = ((worst-sum(rl_emiss_h))/worst*100) if worst > 0 else 0
-        
-        met_stab.metric("Grid Stability Index", f"{rl_stab:.1f}%", f"{rl_stab - 90:.1f}%" if h > 0 else "0.0%")
-        met_ren.metric("Renewable Util. Rate", f"{rl_ren:.1f}%", f"{rl_ren - 50:.1f}%" if h > 0 else "0.0%")
-        met_red.metric("Emission Reduction", f"{rl_red:.1f}%", f"{rl_red - 30:.1f}%" if h > 0 else "0.0%")
-        met_cost.metric("Total 24h Cost", f"${sum(rl_cost_h):.0f}", f"-${sum(cp_cost_h)-sum(rl_cost_h):.0f} vs CP" if h > 0 else "$0")
-
-        # --- Draw Output 1: Live Dispatch ---
-        cur_h = hours[:h+1]
-        fig1 = go.Figure()
-        fig1.add_trace(go.Scatter(x=cur_h, y=rl_solar, stackgroup='one', name='Solar', line=dict(color='#F4D03F'), fillcolor='rgba(244, 208, 63, 0.7)'))
-        fig1.add_trace(go.Scatter(x=cur_h, y=rl_wind, stackgroup='one', name='Wind', line=dict(color='#5DADE2'), fillcolor='rgba(93, 173, 226, 0.7)'))
-        fig1.add_trace(go.Scatter(x=cur_h, y=rl_gas, stackgroup='one', name='Gas', line=dict(color='#E67E22'), fillcolor='rgba(230, 126, 34, 0.7)'))
-        fig1.add_trace(go.Scatter(x=cur_h, y=rl_coal, stackgroup='one', name='Coal', line=dict(color='#7B7D7D'), fillcolor='rgba(123, 125, 125, 0.7)'))
-        fig1.add_trace(go.Scatter(x=cur_h, y=demand_h, mode='lines+markers', name='Demand Target', line=dict(color='#FFFFFF', dash='dash', width=3)))
-        
+        cur = hours[:h + 1]
+        f1 = go.Figure()
+        for nm, col, fc in [("solar", "#F4D03F", "rgba(244,208,63,0.7)"), ("wind", "#5DADE2", "rgba(93,173,226,0.7)"),
+                            ("gas", "#E67E22", "rgba(230,126,34,0.7)"), ("coal", "#7B7D7D", "rgba(123,125,125,0.7)")]:
+            f1.add_trace(go.Scatter(x=cur, y=rl[nm], stackgroup="one", name=nm.capitalize(),
+                                    line=dict(color=col), fillcolor=fc))
+        f1.add_trace(go.Scatter(x=cur, y=demand_h, mode="lines+markers", name="Demand Target",
+                                line=dict(color="#FFFFFF", dash="dash", width=3)))
         if tou_val:
-            fig1.add_vrect(x0=16, x1=20, fillcolor="rgba(255, 0, 0, 0.1)", layer="below", line_width=0, annotation_text="Peak Pricing", annotation_position="top left")
-
-        fig1.update_layout(
-            template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-            title=dict(text=f'Live Energy Allocation vs Target Demand ({season_val})', font=dict(color='#FFFFFF', size=18)),
-            xaxis=dict(range=[0, 23], title=dict(text='Hour of Day', font=dict(color='#FFFFFF')), tickfont=dict(color='#FFFFFF'), gridcolor='rgba(255,255,255,0.1)'), 
-            yaxis=dict(range=[0, 2000], title=dict(text='Energy Supply (kW)', font=dict(color='#FFFFFF')), tickfont=dict(color='#FFFFFF'), gridcolor='rgba(255,255,255,0.1)'),
-            height=450, uirevision='constant', hovermode='x unified', 
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(color='#FFFFFF')),
-            font=dict(color='#FFFFFF'), hoverlabel=dict(bgcolor='#12161E', font_color='#FFFFFF')
-        )
-        chart_dispatch.plotly_chart(fig1, use_container_width=True)
-
-        # --- Draw Output 2: Policy Comparison ---
-        fig2 = make_subplots(specs=[[{"secondary_y": True}]])
-        fig2.add_trace(go.Scatter(x=cur_h, y=rl_cost_h, name='RL Cost', line=dict(color='#00C9FF', width=3)), secondary_y=False)
-        fig2.add_trace(go.Scatter(x=cur_h, y=cp_cost_h, name='CP Cost', line=dict(color='#00FF00', dash='dot', width=2)), secondary_y=False)
-        fig2.add_trace(go.Scatter(x=cur_h, y=rl_emiss_h, name='RL Emissions', line=dict(color='#FF9900', width=3)), secondary_y=True)
-        fig2.add_trace(go.Scatter(x=cur_h, y=cp_emiss_h, name='CP Emissions', line=dict(color='#FF3366', dash='dot', width=2)), secondary_y=True)
-        fig2.add_trace(go.Scatter(x=cur_h, y=[cap_val]*(h+1), name='Emission Cap', line=dict(color='#FFFFFF', dash='dash')), secondary_y=True)
-        fig2.update_layout(
-            template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-            title=dict(text='Cost & Emissions: Deep RL vs Constraint Programming', font=dict(color='#FFFFFF', size=18)),
-            xaxis=dict(range=[0, 23], title=dict(text='Hour of Day', font=dict(color='#FFFFFF')), tickfont=dict(color='#FFFFFF'), gridcolor='rgba(255,255,255,0.1)'),
-            yaxis=dict(title=dict(text='Cost ($)', font=dict(color='#FFFFFF')), tickfont=dict(color='#FFFFFF'), gridcolor='rgba(255,255,255,0.1)'), 
-            yaxis2=dict(title=dict(text='Emissions (units)', font=dict(color='#FFFFFF')), tickfont=dict(color='#FFFFFF')),
-            height=450, uirevision='constant', hovermode='x unified', 
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(color='#FFFFFF')),
-            font=dict(color='#FFFFFF'), hoverlabel=dict(bgcolor='#12161E', font_color='#FFFFFF')
-        )
-        chart_policy.plotly_chart(fig2, use_container_width=True)
-
-        time.sleep(0.08)
+            f1.add_vrect(x0=16, x1=20, fillcolor="rgba(255,0,0,0.10)", layer="below", line_width=0,
+                         annotation_text="Peak Pricing", annotation_position="top left")
+        f1.update_layout(title=f"Live Energy Allocation vs Target Demand ({season_val})",
+                         xaxis=dict(range=[0, 23], title="Hour of Day"),
+                         yaxis=dict(title="Energy Supply (kW)"), uirevision="x",
+                         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), **DARK)
+        chart_dispatch.plotly_chart(f1, use_container_width=True)
+        time.sleep(0.05)
 
     prog_bar.empty()
-    st.toast("✅ 24-Hour Simulation Complete!", icon="🎉")
 
-    # Generate CSV Export
-    df = pd.DataFrame({
-        "Hour": hours, "Demand": demand_h,
-        "RL_Solar": rl_solar, "RL_Wind": rl_wind, "RL_Gas": rl_gas, "RL_Coal": rl_coal,
-        "RL_Cost": rl_cost_h, "RL_Emissions": rl_emiss_h,
-        "CP_Cost": cp_cost_h, "CP_Emissions": cp_emiss_h
-    })
-    csv = df.to_csv(index=False).encode('utf-8')
+    # ---- Output 2: cost & emissions, RL vs LP (rendered once) ----
+    f2 = make_subplots(specs=[[{"secondary_y": True}]])
+    f2.add_trace(go.Scatter(x=hours, y=rl["cost"], name="RL Cost", line=dict(color="#00C9FF", width=3)), secondary_y=False)
+    f2.add_trace(go.Scatter(x=hours, y=cp["cost"], name="LP Cost", line=dict(color="#00FF00", dash="dot", width=2)), secondary_y=False)
+    f2.add_trace(go.Scatter(x=hours, y=rl["emis"], name="RL Emissions", line=dict(color="#FF9900", width=3)), secondary_y=True)
+    f2.add_trace(go.Scatter(x=hours, y=cp["emis"], name="LP Emissions", line=dict(color="#FF3366", dash="dot", width=2)), secondary_y=True)
+    f2.add_trace(go.Scatter(x=hours, y=[cap_val]*24, name="Emission Cap", line=dict(color="#FFFFFF", dash="dash")), secondary_y=True)
+    f2.update_layout(title="Cost & Emissions: Deep RL vs LP Constraint Solver", xaxis_title="Hour of Day", **DARK)
+    f2.update_yaxes(title_text="Cost ($)", secondary_y=False)
+    f2.update_yaxes(title_text="Emissions (units)", secondary_y=True)
+    chart_policy.plotly_chart(f2, use_container_width=True)
+
+    st.toast("24-Hour Simulation Complete!", icon="\u2705")
+
+    # ---- Output 4: export ----
+    df = pd.DataFrame({"Hour": hours, "Demand": demand_h,
+                       "RL_Solar": rl["solar"], "RL_Wind": rl["wind"], "RL_Gas": rl["gas"], "RL_Coal": rl["coal"],
+                       "RL_Cost": rl["cost"], "RL_Emissions": rl["emis"],
+                       "LP_Cost": cp["cost"], "LP_Emissions": cp["emis"]})
     with export_placeholder:
-        st.success("Simulation data is ready for export!")
-        st.download_button("📥 Download Raw Data (CSV)", data=csv, file_name="smart_grid_simulation.csv", mime="text/csv", type="primary")
+        st.success("Simulation data ready for export.")
+        st.download_button("Download Raw Data (CSV)", data=df.to_csv(index=False).encode("utf-8"),
+                           file_name="smart_grid_simulation.csv", mime="text/csv", type="primary")
+        st.dataframe(df, use_container_width=True)
